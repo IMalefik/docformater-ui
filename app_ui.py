@@ -4,17 +4,9 @@ import base64
 import uuid
 import re
 
-st.markdown(
-    """
-    <img src="https://mc.yandex.ru/watch/105367333"
-         style="position:absolute; left:-9999px;" alt="" />
-    """,
-    unsafe_allow_html=True
-)
-
 # ------------------ CONFIG ------------------
 
-BACKEND_URL = "https://docformater.onrender.com/assemble"
+BACKEND_URL = "https://docformater.onrender.com"  # базовый URL (без /assemble)
 
 st.set_page_config(page_title="DocFormatter", layout="wide")
 
@@ -31,24 +23,18 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ------------------ ПЛЕЙСХОЛДЕРЫ ИЗОБРАЖЕНИЙ ------------------
+# ------------------ ПЛЕЙСХОЛДЕРЫ ИЗОБРАЖЕНИЙ (только для МЭИ) ------------------
 
-# Карта плейсхолдеров: uid -> полный Markdown сниппет с data:URL
 if "img_map" not in st.session_state:
     st.session_state["img_map"] = {}  # { uid: "![caption](data:...)" }
 
 TOKEN_RE = re.compile(r"\[\[IMG#([a-f0-9\-]+)\]\]")
-
 
 def expand_tokens(text: str) -> str:
     """Заменяем [[IMG#uid]] на реальные markdown-сниппеты из img_map."""
     if not text:
         return ""
     return TOKEN_RE.sub(lambda m: st.session_state["img_map"].get(m.group(1), ""), text)
-
-
-# ------------------ ОТЛОЖЕННЫЕ ВСТАВКИ ------------------
-
 
 def _insert_with_strategy(current_text: str, snippet: str, strategy: str) -> str:
     current_text = current_text or ""
@@ -64,22 +50,16 @@ def _insert_with_strategy(current_text: str, snippet: str, strategy: str) -> str
         suffix = "" if current_text.endswith("\n") else "\n"
         return (current_text + suffix + snippet + "\n").strip("\n")
 
-
-# отложенные вставки в конкретные поля: { key: {"snippet":..., "position":...} }
 if "pending_inserts" not in st.session_state:
     st.session_state["pending_inserts"] = {}
 
-# применяем отложенные вставки ДО отрисовки виджетов
 if st.session_state["pending_inserts"]:
     to_apply = st.session_state["pending_inserts"].copy()
     for tkey, payload in to_apply.items():
         current = st.session_state.get(tkey, "")
-        new_text = _insert_with_strategy(
-            current, payload["snippet"], payload["position"]
-        )
+        new_text = _insert_with_strategy(current, payload["snippet"], payload["position"])
         st.session_state[tkey] = new_text
     st.session_state["pending_inserts"] = {}
-
 
 def add_image_inserter(text_key: str, where_label: str):
     """Мини-блок «Добавить изображение» для поля с key=text_key."""
@@ -116,23 +96,20 @@ def add_image_inserter(text_key: str, where_label: str):
                 key=f"pos_{text_key}",
             )
         with up3:
-            st.write("")  # отступ
+            st.write("")
             if st.button("Вставить", key=f"do_insert_{text_key}"):
                 if img is None:
                     st.warning("Сначала выберите файл изображения.")
                 else:
-                    # Готовим markdown сниппет и короткую метку
                     mime = img.type or "image/png"
                     b64 = base64.b64encode(img.read()).decode("utf-8")
 
-                    # Сохраняем ПОЛНЫЙ markdown в карту, а в текст вставляем короткую метку [[IMG#uid]]
                     uid = str(uuid.uuid4())
                     full_snippet = f"![{caption}](data:{mime};base64,{b64})"
                     st.session_state["img_map"][uid] = full_snippet
 
                     placeholder = f"[[IMG#{uid}]]"
 
-                    # создаём отложенную вставку и перезапускаем скрипт
                     st.session_state["pending_inserts"][text_key] = {
                         "snippet": placeholder,
                         "position": position,
@@ -140,37 +117,86 @@ def add_image_inserter(text_key: str, where_label: str):
                     st.session_state[flag_key] = False
                     st.rerun()
 
-
 # ------------------ INTERFACE ------------------
 
-st.title("📄 Автооформление курсовой/дипломной работы")
-st.markdown(
-    "Просто заполни разделы текстом, а мы соберем документ с оформлением по ГОСТ за тебя."
-)
+st.title("📄 Сервис автооформления документов")
+st.markdown("Выберите из списка нужный формат документа, вставьте необходимый текст, а наш сервис самостоятельно заполнит нужные поля.")
 
-# Выбор шаблона ГОСТ (пока МЭИ)
-st.subheader("Выберите шаблон для оформления работы")
-preset = st.selectbox(
-    "Шаблон оформления",
-    options=["Оформление по ГОСТ для МЭИ"],
+st.subheader("Выберите формат документа")
+
+preset_label = st.selectbox(
+    "Формат документа",
+    options=["Оформление по ГОСТ для МЭИ", "Проект разработки GlowByte"],
     index=0,
     label_visibility="collapsed",
 )
 
-title = st.text_input(
-    "Название работы (используется только для имени файла)", value="Моя работа"
-)
+preset_code = "mei_gost" if preset_label == "Оформление по ГОСТ для МЭИ" else "glowbyte_project"
+
+st.markdown("---")
+
+# ===================== GlowByte UI =====================
+if preset_code == "glowbyte_project":
+    st.subheader("Проект разработки GlowByte")
+
+    gb_text = st.text_area(
+        "Вставьте текст (сплошняком)",
+        height=260,
+        help="Можно вставить ТЗ/описание проекта обычным текстом. Сервис сам разложит по полям."
+    )
+
+    gb_file = st.file_uploader(
+        "Приложите фото или файл (опционально)",
+        type=["png", "jpg", "jpeg", "webp", "docx", "txt", "pdf"],
+        accept_multiple_files=False
+    )
+
+    title = st.text_input("Название (для имени файла)", value="GlowByte_Проект")
+
+    if st.button("Собрать документ"):
+        with st.spinner("Формируется документ..."):
+            try:
+                data = {
+                    "title": title,
+                    "text": gb_text or "",
+                }
+                files = None
+                if gb_file is not None:
+                    files = {
+                        "file": (gb_file.name, gb_file.getvalue(), gb_file.type or "application/octet-stream")
+                    }
+
+                resp = requests.post(f"{BACKEND_URL}/assemble_glowbyte", data=data, files=files)
+
+                if resp.status_code == 200:
+                    st.success("✅ Документ успешно создан!")
+                    st.download_button(
+                        label="⬇️ Скачать DOCX",
+                        data=resp.content,
+                        file_name=f"{title}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+                else:
+                    st.error(f"Ошибка: {resp.status_code}")
+                    st.text(resp.text)
+
+            except Exception as e:
+                st.error(f"Не удалось подключиться к серверу: {e}")
+
+    st.stop()
+
+# ===================== МЭИ UI (старое как было) =====================
+
+st.subheader("Оформление по ГОСТ для МЭИ")
+
+title = st.text_input("Название работы (используется только для имени файла)", value="Моя работа")
 include_toc = st.checkbox("Добавить содержание (оглавление)", value=True)
 
 st.markdown("---")
 st.subheader("Добавьте разделы и подразделы")
 
-# ------------------ СБОР ДАННЫХ ------------------
-
 sections = []
-section_count = st.number_input(
-    "Количество разделов", min_value=1, max_value=15, value=1, step=1
-)
+section_count = st.number_input("Количество разделов", min_value=1, max_value=15, value=1, step=1)
 
 for i in range(section_count):
     st.markdown(f"### Раздел {i+1}")
@@ -183,34 +209,22 @@ for i in range(section_count):
 
     sub_count = st.number_input(
         f"Количество подразделов для раздела {i+1}",
-        min_value=0,
-        max_value=10,
-        value=0,
-        step=1,
-        key=f"subcount_{i}",
+        min_value=0, max_value=10, value=0, step=1, key=f"subcount_{i}"
     )
     subs = []
 
     for j in range(sub_count):
         st.markdown(f"#### Подраздел {i+1}.{j+1}")
 
-        sub_heading = st.text_input(
-            f"Название подраздела {i+1}.{j+1}", key=f"sub_heading_{i}_{j}"
-        )
+        sub_heading = st.text_input(f"Название подраздела {i+1}.{j+1}", key=f"sub_heading_{i}_{j}")
 
         sub_body_key = f"sub_body_{i}_{j}"
-        sub_body = st.text_area(
-            f"Текст подраздела {i+1}.{j+1}", height=150, key=sub_body_key
-        )
+        sub_body = st.text_area(f"Текст подраздела {i+1}.{j+1}", height=150, key=sub_body_key)
         add_image_inserter(sub_body_key, f"подраздела {i+1}.{j+1}")
 
         sub3_count = st.number_input(
             f"Количество подподразделов для {i+1}.{j+1}",
-            min_value=0,
-            max_value=10,
-            value=0,
-            step=1,
-            key=f"sub3count_{i}_{j}",
+            min_value=0, max_value=10, value=0, step=1, key=f"sub3count_{i}_{j}"
         )
         sub3s = []
         for k in range(sub3_count):
@@ -218,38 +232,34 @@ for i in range(section_count):
 
             sub3_heading = st.text_input(
                 f"Название подподраздела {i+1}.{j+1}.{k+1}",
-                key=f"sub3_heading_{i}_{j}_{k}",
+                key=f"sub3_heading_{i}_{j}_{k}"
             )
 
             sub3_body_key = f"sub3_body_{i}_{j}_{k}"
             sub3_body = st.text_area(
-                f"Текст подподраздела {i+1}.{j+1}.{k+1}", height=120, key=sub3_body_key
+                f"Текст подподраздела {i+1}.{j+1}.{k+1}",
+                height=120, key=sub3_body_key
             )
             add_image_inserter(sub3_body_key, f"подподраздела {i+1}.{j+1}.{k+1}")
 
-            sub3s.append(
-                {
-                    "heading": sub3_heading,
-                    "body": st.session_state.get(sub3_body_key, ""),
-                }
-            )
+            sub3s.append({
+                "heading": sub3_heading,
+                "body": st.session_state.get(sub3_body_key, "")
+            })
 
-        subs.append(
-            {
-                "heading": sub_heading,
-                "body": st.session_state.get(sub_body_key, ""),
-                "sub3": sub3s,
-            }
-        )
+        subs.append({
+            "heading": sub_heading,
+            "body": st.session_state.get(sub_body_key, ""),
+            "sub3": sub3s
+        })
 
-    sections.append(
-        {"heading": heading, "body": st.session_state.get(body_key, ""), "sub": subs}
-    )
-
-# ------------------ КНОПКА ------------------
+    sections.append({
+        "heading": heading,
+        "body": st.session_state.get(body_key, ""),
+        "sub": subs
+    })
 
 if st.button("Собрать документ"):
-    # Перед отправкой разворачиваем плейсхолдеры изображений в реальный markdown
     def _expand_section(sec: dict) -> dict:
         sec = dict(sec)
         sec["body"] = expand_tokens(sec.get("body", ""))
@@ -265,19 +275,19 @@ if st.button("Собрать документ"):
         "title": title,
         "include_toc": include_toc,
         "sections": expanded_sections,
-        "preset": "mei_gost",  # на будущее
+        "preset": "mei_gost",
     }
 
     with st.spinner("Формируется документ..."):
         try:
-            resp = requests.post(BACKEND_URL, json=payload)
+            resp = requests.post(f"{BACKEND_URL}/assemble", json=payload)
             if resp.status_code == 200:
                 st.success("✅ Документ успешно создан!")
                 st.download_button(
                     label="⬇️ Скачать DOCX",
                     data=resp.content,
                     file_name=f"{title}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 )
             else:
                 st.error(f"Ошибка: {resp.status_code}")
